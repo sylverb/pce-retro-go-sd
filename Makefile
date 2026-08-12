@@ -12,7 +12,7 @@
 # Project identity
 #######################################
 # core     → pack_core.py     → /cores/<name>.bin
-# homebrew → pack_homebrew.py → /roms/homebrew/<name>.bin
+# homebrew → pack_homebrew.py → /homebrews/<name>.bin
 PROJECT_KIND ?= core
 
 CORE_NAME  := example

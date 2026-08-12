@@ -21,7 +21,7 @@ the default linker contract. This file is the memory + porting checklist.
 
 ```
 SD /cores/<name>.bin          (CORE)     → emulators_scan_cores() → system tab
-SD /roms/homebrew/<name>.bin  (GWHB)     → Homebrew tab → run_gwhb_homebrew()
+SD /homebrews/<name>.bin      (GWHB)     → Homebrew tab → run_gwhb_homebrew()
   → memcpy code → RAM_EMU, zero BSS, jump Thumb entry
   → your CORE_ENTRY loop calls LCD / audio / FS / input via the ABI bridge
 ```
