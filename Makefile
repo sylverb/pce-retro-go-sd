@@ -1,32 +1,44 @@
-# Retro-Go SD template — one project = one CORE or one GWHB homebrew.
+# PC Engine / PC Engine CD — standalone Retro-Go SD core (pce-go + porting).
 #
-#   make                  — build + pack (default: PROJECT_KIND=core)
-#   make PROJECT_KIND=homebrew
+#   make                  — build + pack → pce.bin
 #   make docker           — same build inside Docker (no host toolchain)
 #   make docker_shell     — interactive shell in the builder image
 #
-# Customize CORE_NAME / pack metadata below, then replace src/main.c.
-# Verbose compiler lines: make V=
+# One core binary, two launcher tabs: HuCard ROMs (dirname=pce, parse=rom)
+# and CD-ROM² .cue images (dirname=pcecd, parse=cdrom). CPU-hot objects
+# live in ITCM (see ld/pce_core.ld). Verbose compiler lines: make V=
+#
+# BUILD_DIR must stay `build`: ld/pce_core.ld names objects as build/*.o
+# (a `*pce.o` glob would also match main_pce.o).
 
 #######################################
 # Project identity
 #######################################
-# core     → pack_core.py     → /cores/<name>.bin
-# homebrew → pack_homebrew.py → /homebrews/<name>.bin
 PROJECT_KIND ?= core
 
-CORE_NAME  := example
-CORE_ENTRY := app_main
+CORE_NAME  := pce
+CORE_ENTRY := app_main_pce
 
 CORE_C_SOURCES := \
-src/main.c
+src/pce-go/gfx.c \
+src/pce-go/h6280.c \
+src/pce-go/pce.c \
+src/porting/sound_pce.c \
+src/porting/pce_cd.c \
+src/porting/pce_scsi.c \
+src/porting/pce_adpcm.c \
+src/main_pce.c
+
+CORE_C_INCLUDES := \
+-Isrc/porting \
+-Isrc/pce-go
 
 # Relative path so Docker bind-mounts work (do NOT use $(abspath) — it
 # bakes the host path into Make prerequisites / .d files). Do not name
 # this SDK_ROOT: that env var is commonly set by Android SDK installs.
 GNW_CORE_SDK ?= sdk
-# Separate build trees so switching PROJECT_KIND does not reuse stale .o.
-BUILD_DIR ?= build/$(PROJECT_KIND)
+# Must match EXCLUDE_FILE / .core_itcm paths in ld/pce_core.ld.
+BUILD_DIR ?= build
 
 #######################################
 # Kind-specific compile defs + packing
@@ -41,73 +53,38 @@ CORE_C_DEFS := \
 -DCHEAT_CODES=1 \
 -DMAX_CHEAT_CODES=13
 
-PACKED_BIN  := $(CORE_NAME).bin
-PAD_LOGO    := src/assets/pad.png
-HEADER_LOGO := src/assets/header.png
+PACKED_BIN := $(CORE_NAME).bin
+PAD_LOGO     := src/assets/pad.bmp
+HEADER_LOGO  := src/assets/header.bmp
+HEADER_CD    := src/assets/header_cd.bmp
 
-else ifeq ($(PROJECT_KIND),homebrew)
-CORE_C_DEFS := \
--DPROJECT_KIND_HOMEBREW=1
-
-PACKED_BIN := ExampleHB.bin
-COVER_JPG  := $(BUILD_DIR)/cover.jpg
+CORE_LDSCRIPT := ld/pce_core.ld
+CORE_EXTRA_SEGMENTS := itcm:core_itcm
 
 else
-$(error PROJECT_KIND must be 'core' or 'homebrew' (got '$(PROJECT_KIND)'))
+$(error PROJECT_KIND must be 'core' (got '$(PROJECT_KIND)'))
 endif
 
 include $(GNW_CORE_SDK)/Makefile
 
-PACK_CORE     := $(GNW_CORE_SDK)/tools/pack_core.py
-PACK_HOMEBREW := $(GNW_CORE_SDK)/tools/pack_homebrew.py
+PACK_CORE := $(GNW_CORE_SDK)/tools/pack_core.py
 
 #######################################
 # Pack
 #######################################
-.PHONY: pack cover
+.PHONY: pack
 
-ifeq ($(PROJECT_KIND),core)
-
-pack: $(TARGET_BIN) $(PAD_LOGO) $(HEADER_LOGO)
+pack: $(TARGET_BIN) $(BUILD_DIR)/pce_core_itcm.bin $(PAD_LOGO) $(HEADER_LOGO) $(HEADER_CD)
 	$(V)$(ECHO) [ PACK CORE ] $(PACKED_BIN)
 	$(V)python3 $(PACK_CORE) \
 		--elf $(TARGET_ELF) --bin $(TARGET_BIN) \
-		--system-name "Example Core" --dirname example \
-		--extensions "bin" \
-		--core-name "Example" \
+		--system name="PC Engine",dirname=pce,pad_logo=$(PAD_LOGO),header_logo=$(HEADER_LOGO),ext=pce,parse=rom,cheat_ext=pceplus \
+		--system name="PC Engine CD",dirname=pcecd,pad_logo=$(PAD_LOGO),header_logo=$(HEADER_CD),ext=cue,parse=cdrom,cheat_ext=pceplus \
+		--logo-invert \
+		--segment itcm:__ITCM_CORE_START__:__CORE_ITCM_CODE_END__:__CORE_ITCM_BSS_END__:$(BUILD_DIR)/pce_core_itcm.bin \
+		--core-name "PCE-GO" \
 		--version 1.0.0 \
-		--cheat-ext ggcodes \
-		--pad-logo $(PAD_LOGO) \
-		--header-logo $(HEADER_LOGO) \
 		--out $(PACKED_BIN)
-
-else
-
-.PHONY: cover
-cover: $(COVER_JPG)
-
-# Must fit gui.c COVER_MAX_WIDTH x COVER_MAX_HEIGHT (186x100) and
-# COVER_SIZE (10 KiB) — oversized covers smash the HW JPEG scratch.
-$(COVER_JPG):
-	@mkdir -p $(BUILD_DIR)
-	python3 -c "from pathlib import Path; from PIL import Image, ImageDraw, ImageFont; \
-img=Image.new('RGB', (186,100), (32,48,96)); \
-d=ImageDraw.Draw(img); \
-d.rectangle((8,8,177,91), outline=(220,220,255), width=2); \
-d.text((20,38), 'Example HB', fill=(255,255,255)); \
-img.save('$(COVER_JPG)', 'JPEG', quality=85, optimize=True); \
-sz=Path('$(COVER_JPG)').stat().st_size; \
-assert sz <= 10*1024, f'cover too big: {sz}'"
-
-pack: $(TARGET_BIN) $(COVER_JPG)
-	$(V)$(ECHO) [ PACK GWHB ] $(PACKED_BIN)
-	$(V)python3 $(PACK_HOMEBREW) \
-		--elf $(TARGET_ELF) --bin $(TARGET_BIN) \
-		--name "Example Homebrew" --version 1.0.0 \
-		--cover $(COVER_JPG) \
-		--out $(PACKED_BIN)
-
-endif
 
 all: pack
 
@@ -124,9 +101,6 @@ print-DOCKER_IMAGE:
 
 clean::
 	$(V)rm -f $(PACKED_BIN)
-ifeq ($(PROJECT_KIND),homebrew)
-	$(V)rm -f $(COVER_JPG)
-endif
 
 #######################################
 # Docker (same image as firmware repo)

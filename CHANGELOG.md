@@ -1,12 +1,5 @@
 # Changelog
 
-This file is a template for the single project created from this repo.
-At project setup time you choose exactly one kind by setting `PROJECT_KIND`
-to `core` or `homebrew` (you will only build/release that chosen kind).
-
-Update the content for your project and keep the section heading matching
-the pushed release tag (CI requirement).
-
 This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Release tags must
 match a section heading exactly (for example `v1.0.0`).
@@ -22,21 +15,29 @@ is also used in staged asset names (`<binary>-<tag>.bin`, `<binary>-<tag>.zip`).
 
 ## [Unreleased]
 
+### Fixed
+
+- PC Engine CD: claim Super CD-ROM² RAM via `ram_malloc` / `dtc_malloc` /
+  `ahb_malloc` instead of overlaying the free RAM_EMU bump. Firmware SPI SD
+  DMA bounce buffers also use `ram_malloc`; the old overlay collided and
+  caused System Card "LOAD ERROR", music dropouts, and freezes.
+- Move ADPCM 64KB sample RAM to DTCM (`dtc_calloc`) to free RAM_EMU headroom
+  for CD banks + SD DMA.
+
 ### Added
 
-- (your changes here)
+- Ported the firmware PC Engine / PC Engine CD core (`pce-go` + `porting/pce`)
+  into this standalone tree: HuCard + CD-ROM² tabs, ITCM hot path, `pceplus`
+  cheats.
 
 ### Changed
 
-- (your changes here)
-
-### Fixed
-
-- (your changes here)
+- Packed output is `pce.bin` (`/cores/pce.bin`). HuCard ROMs under `/roms/pce/`,
+  CD images under `/roms/pcecd/`, System Card at `/bios/pce/syscard3.pce`.
 
 ## [v1.0.0] - 2026-08-12
 
-Initial public release for your chosen kind (`core` or `homebrew`).
+Initial public release of the Retro-Go SD core/homebrew template.
 
 ### Added
 
@@ -51,22 +52,12 @@ Initial public release for your chosen kind (`core` or `homebrew`).
 
 ### Install
 
-Only the section corresponding to your chosen `PROJECT_KIND` is relevant for
-your derived project.
+**Core (`PROJECT_KIND=core`)**
 
-**Core (`PROJECT_KIND=core`, default)**
-
-- Copy `example.bin` to `/cores/` on the SD card.
-- Place test ROMs under `/roms/example/` (dirname matches `CORE_NAME` in the
-  Makefile).
+- Copy `pce.bin` to `/cores/` on the SD card.
+- HuCard ROMs: `/roms/pce/*.pce`
+- CD-ROM²: `/roms/pcecd/<game>/<game>.cue` (+ sibling `.bin` tracks)
+- System Card (CD): `/bios/pce/syscard3.pce` or `syscard3.bin`
 - Requires firmware whose ABI matches `SDK_VERSION` in this repository.
 
-**Homebrew (`PROJECT_KIND=homebrew`)**
-
-- Set `PROJECT_KIND=homebrew` in the Makefile, rebuild, then copy
-  `ExampleHB.bin` to `/homebrews/`.
-- Optional coverflow override: `/covers/homebrew/ExampleHB.img` (JPEG ≤186×100,
-  ≤10 KiB).
-
-The release archive contains the ready-to-copy SD layout for the active project
-kind only (`cores/` or `homebrews/`).
+The release archive contains the ready-to-copy SD layout (`cores/pce.bin`).

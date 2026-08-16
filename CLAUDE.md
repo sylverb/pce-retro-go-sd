@@ -1,21 +1,16 @@
 # CLAUDE.md — Porting an emulator core (Retro-Go SD)
 
-This repository is a **single-project** template for a Game & Watch
-**dynamic core** or a **GWHB homebrew**: a freestanding Cortex-M7 binary
-that the firmware loads into a fixed RAM window and talks to **only**
-through `gw_firmware_abi_t`. You do not link against the firmware ELF.
+This repository is the **PC Engine / PC Engine CD** dynamic core for
+Game & Watch Retro-Go SD: a freestanding Cortex-M7 binary that the
+firmware loads into a fixed RAM window and talks to **only** through
+`gw_firmware_abi_t`. You do not link against the firmware ELF.
 
-One tree = one binary. Choose the kind at build time:
+Packed as `PROJECT_KIND=core` → `/cores/pce.bin` (two launcher tabs:
+HuCard + CD-ROM²). Homebrew packing is not used here.
 
-
-| Kind         | `PROJECT_KIND` | Packer             | SD path                |
-| ------------ | -------------- | ------------------ | ---------------------- |
-| Dynamic core | `core` (default) | `pack_core.py`   | `/cores/*.bin`         |
-| Homebrew     | `homebrew`     | `pack_homebrew.py` | `/roms/homebrew/*.bin` |
-
-
-Read `README.md` for build/pack basics. Read `sdk/ld/core_ram_emu.ld` for
-the default linker contract. This file is the memory + porting checklist.
+Read `README.md` for build/pack basics. Read `ld/pce_core.ld` and
+`sdk/ld/core_ram_emu.ld` for the memory + linker contract. This file is
+the memory + porting checklist.
 
 ## Mental model
 
@@ -39,14 +34,14 @@ SD /homebrews/<name>.bin      (GWHB)     → Homebrew tab → run_gwhb_homebrew(
 1. Start from this repo (`PROJECT_KIND=core`).
 2. Set `CORE_NAME`, `CORE_ENTRY`, `CORE_C_SOURCES` in the root `Makefile`
   (it already `include`s `sdk/Makefile`).
-3. In `src/main.c`, include firmware-style headers first, then
+3. In `src/main_pce.c`, include firmware-style headers first, then
   `#include "gw_core_bridge.h"` **last** (macros rewrite `ACTIVE_FILE` /
    `ram_start` / `common_emu_state`).
 4. Seed the RAM_EMU bump if you use `ram_malloc`:
   `ram_start = (uint32_t)(uintptr_t)&__CORE_BSS_END__;`
 5. Wire `odroid_system_init` + `odroid_system_emu_init` (save/load/screenshot
   hooks as needed).
-6. Frame loop pattern (see `src/main.c`):
+6. Frame loop pattern (see `src/main_pce.c`):
   - `wdog_refresh()` regularly (WWDG is ~hundreds of ms — a slow frame or
    a large memset without kicks soft-resets with no useful log).
   - `common_emu_frame_loop()` → input → emulate → present → audio.
@@ -218,7 +213,7 @@ values. Anything else still stores the request in
 Half-buffer length must stay ≤ `AUDIO_BUFFER_LENGTH` (1077): e.g.
 48000/50 = 960 is fine; 192000 needs a shorter period or will not fit.
 
-### Frame-loop pattern (see `src/main.c`)
+### Frame-loop pattern (see `src/main_pce.c`)
 
 1. After system init: `audio_start_playing(sample_rate / fps)`.
 2. Each loop: emulate → present → fill `audio_get_active_buffer()` for
@@ -264,10 +259,13 @@ In this repo after a firmware change:
 ## Existing binaries in this tree
 
 
-| Path     | Notes                                                                 |
+| Path | Notes |
 | -------- | --------------------------------------------------------------------- |
-| `src/main.c` | Shared CORE / GWHB skeleton (`PROJECT_KIND_*`); LCD + audio beep demo |
+| `src/main_pce.c` | Device glue: HuCard / CD mount, audio mix, savestates, cheats |
+| `src/pce-go/` | HuExpress-GO CPU / VDC / memory map (ITCM `.text`) |
+| `src/porting/` | CD SCSI, ADPCM, CUE/BIN, PSG mixer (ITCM `.text`) |
+| `ld/pce_core.ld` | RAM_EMU + ITCM; do not glob `*pce.o` (matches `main_pce.o`) |
 
 
-Start from `src/main.c` when placing WRAM / heaps / interpreters; use the
-memory map above for ITCM / DTCM / AHB / RAM_EMU choices.
+CPU-hot objects go in ITCM; `main_pce.o` and the ABI bridge stay in RAM_EMU.
+Use the memory map above for DTCM / AHB / RAM_EMU choices.

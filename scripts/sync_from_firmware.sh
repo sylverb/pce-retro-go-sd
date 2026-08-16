@@ -54,7 +54,9 @@ done <<< "$DEPS"
 for extra in \
   Core/Inc/retro-go/gnw_core_meta.h \
   Core/Inc/retro-go/gwhb.h \
+  Core/Inc/retro-go/appid.h \
   Core/Inc/gw_malloc.h \
+  Core/Inc/gw_buttons.h \
   Core/Inc/heap.hpp
 do
   [[ -f "$FW/$extra" ]] || continue

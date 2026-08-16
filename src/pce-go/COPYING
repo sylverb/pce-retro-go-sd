@@ -1,16 +1,3 @@
-This project as a whole is licensed under the GNU General Public License
-version 2 (or later), because it includes HuExpress-GO (src/pce-go/).
-See src/pce-go/COPYING for the full license text.
-
-The SDK glue under sdk/ (bridge, packers, linker fragments) originated
-as MIT-licensed template code. Combined with the emulator, the distributed
-core is GPL-2.
-
-Vendored headers under sdk/include/ originate from the Game & Watch
-Retro-Go SD firmware and retain their original licenses (GPL / vendor
-terms as applicable). STM32 HAL / CMSIS files keep ST's BSD-style terms.
-FatFs keeps its original license.
-
 		    GNU GENERAL PUBLIC LICENSE
 		       Version 2, June 1991
 
