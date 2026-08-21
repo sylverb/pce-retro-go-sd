@@ -25,7 +25,11 @@
  * header comment for why this ordering matters: common_emu_state/ram_start/
  * dma_counter/etc. become live-ABI macros below, so their "real" extern
  * declarations from common.h/gw_malloc.h/gw_audio.h must be parsed first). */
+#ifdef HOST_BUILD
+#include "host_compat.h"
+#else
 #include "gw_core_bridge.h"
+#endif
 
 //#define PCE_SHOW_DEBUG
 #define FPS_NTSC 60
@@ -439,7 +443,11 @@ static void pce_rom_patch()
      * (RAM_EMU usage varies per core/segment layout), so take the live
      * bump-pointer position/remaining size instead — identical semantics:
      * this is exactly where the NEXT ram_malloc() would start. */
+#ifdef HOST_BUILD
+    unsigned char *dest = (unsigned char *)host_ram_bump_ptr();
+#else
     unsigned char *dest = (unsigned char *)ram_start;
+#endif
     uint32_t available_size = ram_get_free_size();
 
     uint8_t *DynMEM[16]; //max 16*16=256k;  single bank is 8k but here must two bank batch move
@@ -511,11 +519,10 @@ static void pce_rom_patch()
 size_t
 pce_osd_getromdata(unsigned char **data)
 {
-    /* Dynamic cores always self-manage ROM loading (SD_CARD=1: no compressed
-     * ROMs, see cores/_template/Makefile's -DGNW_DISABLE_COMPRESSION) — reset
-     * the shared RAM bump pointer to right past this core's own code+bss on
-     * every load, exactly like main_wsv.c/main_gwenesis.c. */
-    ram_start = (uint32_t)&__CORE_BSS_END__;
+    /* Firmware seeds ram_start after load (past this core's code+bss).
+     * Rewind the bump on every ROM/CD mount so prior ram_malloc sessions
+     * do not leak into the next load. Do not reassign ram_start here. */
+    ram_init();
     if (strcmp(ACTIVE_FILE->ext, "cue") == 0) {
         /* PCE-CD: the "ROM" is the System Card BIOS (mapped at bank 0); the disc
          * image itself is streamed from SD separately. XIP it from flash like a
@@ -523,10 +530,23 @@ pce_osd_getromdata(unsigned char **data)
         uint32_t bios_size = 0;
         *data = NULL;
         for (size_t i = 0; i < sizeof(PCE_SYSCARD_BIOS_PATHS) / sizeof(PCE_SYSCARD_BIOS_PATHS[0]); i++) {
+#ifdef HOST_BUILD
+            *data = host_load_sd_file(PCE_SYSCARD_BIOS_PATHS[i], &bios_size);
+#else
             *data = (unsigned char *)odroid_overlay_cache_file_in_flash(PCE_SYSCARD_BIOS_PATHS[i], &bios_size, false);
+#endif
             if (*data != NULL && bios_size > 0)
                 break;
         }
+#ifdef HOST_BUILD
+        if (*data == NULL || bios_size == 0) {
+            fprintf(stderr,
+                    "host: System Card BIOS not found (tried /bios/pce/syscard3.pce|.bin).\n"
+                    "      Set HOST_SD to your SD root, e.g.\n"
+                    "        export HOST_SD=\"/path/to/master_g&w_sd\"\n"
+                    "      so HOST_SD/bios/pce/syscard3.pce resolves.\n");
+        }
+#endif
         /* Mount the disc so the System Card's SCSI reads ($1800) hit the CUE/BIN. */
         pce_cd_close();   /* drop any stale cached .bin handle from a prior launch */
         if (pce_cd_parse_cue(ACTIVE_FILE->path, &s_pcecd_toc))
@@ -770,7 +790,11 @@ void LoadCartPCE() {
         PCE.MemoryMapW[0x00] = PCE.IOAREA;
 
     //pce_rom_patch
+#ifdef HOST_BUILD
+    unsigned char *dest = (unsigned char *)host_ram_bump_ptr();
+#else
     unsigned char *dest = (unsigned char *)ram_start;
+#endif
     printf("Rom: %p %p \n", PCE.ROM, dest);
 
     if (PCE.ROM != dest)
@@ -926,6 +950,12 @@ void pce_osd_gfx_blit() {
  * with common_emu_sound_sync. */
 static void pce_sound_sync_with_prefetch(void)
 {
+#ifdef HOST_BUILD
+    /* No SAI DMA ISR on the host — waiting on dma_counter would spin forever
+     * (cpumon_sleep is a no-op). Pace via the host SDL audio queue instead. */
+    common_emu_sound_sync(false);
+    return;
+#else
     if (common_emu_state.skip_frames)
         return;                     /* running behind: no wait, no extra SD work */
     if (common_emu_sound_dma_marker == 0)
@@ -937,6 +967,7 @@ static void pce_sound_sync_with_prefetch(void)
         }
         common_emu_sound_dma_marker = dma_counter;
     }
+#endif
 }
 
 void pce_pcm_submit() {
@@ -1081,6 +1112,12 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused, int8_t save_slot) {
 #endif
 
     LoadCartPCE();
+#ifdef HOST_BUILD
+    if (PCE.ROM == NULL || PCE.ROM_SIZE == 0) {
+        fprintf(stderr, "host: failed to load ROM (pass a .pce path, or HOST_ROM=…)\n");
+        return 1;
+    }
+#endif
     ResetPCE(false);
     printf("PCE Core initialized\n");
 

@@ -36,9 +36,11 @@ SD /homebrews/<name>.bin      (GWHB)     → Homebrew tab → run_gwhb_homebrew(
   (it already `include`s `sdk/Makefile`).
 3. In `src/main_pce.c`, include firmware-style headers first, then
   `#include "gw_core_bridge.h"` **last** (macros rewrite `ACTIVE_FILE` /
-   `ram_start` / `common_emu_state`).
-4. Seed the RAM_EMU bump if you use `ram_malloc`:
-  `ram_start = (uint32_t)(uintptr_t)&__CORE_BSS_END__;`
+   `ram_start` / `common_emu_state`). On host builds, include
+   `host_compat.h` instead (`-DHOST_BUILD`).
+4. Firmware seeds `ram_start` after load. Call `ram_init()` to rewind the
+  bump (e.g. on every ROM/CD mount). Only assign `ram_start` yourself if
+  you intentionally move that base before `ram_init()`.
 5. Wire `odroid_system_init` + `odroid_system_emu_init` (save/load/screenshot
   hooks as needed).
 6. Frame loop pattern (see `src/main_pce.c`):
@@ -53,7 +55,8 @@ SD /homebrews/<name>.bin      (GWHB)     → Homebrew tab → run_gwhb_homebrew(
 9. Pack logos from `src/assets/*.bmp|png` via `--pad-logo` / `--header-logo`
   (dark-on-light). Optional: `--cheat-ext ggcodes|pceplus|mcf` (or
    `cheat_ext=` in `--system`) so the launcher only probes that cheat
-   file type — leave empty if unsupported.
+   file type — leave empty if unsupported. Version comes from
+   `git describe --tags --dirty` (`CORE_VERSION`).
 
 
 
@@ -78,9 +81,15 @@ Same as cores for steps 2–8, but:
 - `__aeabi_memset` / `__aeabi_memclr` take `(dest, n, c)` — `n` and `c`
 swapped vs libc `memset`. Use the bridge trampolines; do not alias them
 to `memset`.
+- To supply your own `memcpy`/`memset`/`memmove`/`malloc`, see the
+  `GW_CORE_BRIDGE_DISABLE_SDK_*` defines documented at the top of the
+  root `Makefile`.
 - newlib macros (`isalnum`, `feof`, …): call through ABI/bridge wrappers
 already provided, or you will pull in unwanted libc.
 - Hard-float `fpv5-d16` is mandatory (same calling convention as firmware).
+- LUT8 LCD mode, `lcd_pen_*`, and the RAM_UC bonus pool are documented in
+  the template `CLAUDE.md` / firmware headers (`gw_lcd.h`); this PCE core
+  stays on RGB565.
 
 ---
 
@@ -100,11 +109,11 @@ core**.
 | **ITCM**                   | `0x00000000`                   | **64 KiB**                                | Zero-wait instruction + data, tightly coupled | `itc_malloc` / `itc_calloc`; and/or packed `GNW_CORE_REGION_ITCM` segment (`gnw_itcm_core.ld`)                                                                                                                                                                                                                                                    | Hot interpreters, opcode dispatch, tiny hot loops — **code first**          |
 | **DTCM**                   | `0x20000000`                   | **128 KiB** total; **~104 KiB** for cores | Zero-wait data TCM                            | Stack (~24 KiB + redzone at top). Core pool is the bump below that: `dtcm_init` / `dtcm_malloc` / `dtcm_calloc` (**no** `free`; forgotten by `dtcm_init()`). Plan on **~104 KiB**                                                                                                                                                                 | Small hot **state** (CPU regs, line buffers, tiny synth structs)            |
 | **AHB SRAM**               | `0x30000000`                   | **128 KiB** total                         | AXI/AHB SRAM; **no** special I-fetch path     | Top **8 KiB** = firmware `.audio` DMA (non-cacheable). Remainder holds firmware `.persistent` / `.data` / `.bss` then the **newlib heap**. Cores use `malloc` / `calloc` / `free` **or** `ahb_malloc` / `ahb_calloc` (aliases). Budget roughly **~64 KiB − 8 KiB audio ≈ ~56 KiB** freeable heap after firmware AHB usage — exact leftover varies | Medium buffers that must not eat DTCM/RAM_EMU; anything that needs `free()` |
-| **AXI SRAM (framebuffer)** | `0x24000000`                   | **300 KiB**                               | Uncached / LCD path                           | Firmware-owned double framebuffer (2×320×240 RGB565)                                                                                                                                                                                                                                                                                              | Do not put core heaps here                                                  |
-| **AXI SRAM (RAM_EMU)**     | after FB (`__RAM_EMU_START_`_) | **~724 KiB** (`1024 KiB − 300 KiB`)       | Cached AXI                                    | Core **link** image (`.text` / `.rodata` / `.data` / `.bss`) + `ram_malloc` / `ram_calloc` bump from `ram_start`                                                                                                                                                                                                                                  | Default home for code, BSS, WRAM, VRAM, frame staging, most emulator state  |
+| **AXI SRAM (framebuffer)** | `0x24000000`                   | **300 KiB** (RGB565) / **150 KiB** (LUT8) | Uncached / LCD path                           | Firmware-owned double framebuffer (2×320×240 RGB565 or 1×LUT8). In LUT8 mode the upper **150 KiB** is freed as the cacheable **RAM_UC** window                                                                                                                                                                                                   | LUT8 bonus: `GNW_CORE_REGION_RAM_UC` segment or `lcd_get_bonus_pool()` heap |
+| **AXI SRAM (RAM_EMU)**     | after FB (`__RAM_EMU_START__`) | **~724 KiB** (`1024 KiB − 300 KiB`)       | Cached AXI                                    | Core **link** image (`.text` / `.rodata` / `.data` / `.bss`) + `ram_malloc` / `ram_calloc` bump (firmware seeds the pool after load)                                                                                                                                                                                                              | Default home for code, BSS, WRAM, VRAM, frame staging, most emulator state  |
 
 
-Exact constants: `sdk/ld/gnw_ram_emu.ld`, `gnw_itcm_core.ld`, `gnw_ahb_core.ld`.
+Exact constants: `sdk/ld/gnw_ram_emu.ld`, `gnw_itcm_core.ld`, `gnw_ram_uc_core.ld`.
 
 ### Pool APIs (`gw_malloc.h` → `mem_ctl`)
 
@@ -112,14 +121,15 @@ Exact constants: `sdk/ld/gnw_ram_emu.ld`, `gnw_itcm_core.ld`, `gnw_ahb_core.ld`.
 | Call                          | Pool                     | Notes                                                                                                                                                             |
 | ----------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `itc_malloc` / `itc_calloc`   | ITCM bump                | Failure sentinel can be `0xffffffff` (NULL is a valid ITCM address). Call `itc_init` when appropriate. Competes with any ITCM **segment** you pack into the core. |
-| `ram_malloc` / `ram_calloc`   | RAM_EMU bump             | Seed `ram_start` to `&__CORE_BSS_END_`_ first. `ram_get_free_size()` for leftover.                                                                                |
+| `ram_malloc` / `ram_calloc`   | RAM_EMU bump             | Firmware seeds `ram_start` after load. Call `ram_init()` to rewind the bump back to `ram_start`. Only assign `ram_start` yourself if you intentionally move that base before `ram_init()`. `ram_get_free_size()` for leftover. |
 | `malloc` / `calloc` / `free`  | **AHB** newlib heap      | Same physical pool as `ahb_`*. Freeable. No pool-wide reset (launcher AHB state must survive).                                                                    |
 | `ahb_malloc` / `ahb_calloc`   | **AHB** newlib heap      | Aliases of `malloc` / `calloc`. Prefer these when you want the pool to be obvious in the source. Large clears: chunk + `wdog_refresh()`.                          |
 | `dtcm_malloc` / `dtcm_calloc` | **DTCM** bump (~104 KiB) | Fast hot state. **No** `free` — call `dtcm_init()` to rewind. Do not confuse with `malloc`.                                                                       |
 
 
 There is **no** `dtcm_free` and **no** AHB bump rewind in the current ABI —
-AHB is the freeable heap; DTCM is the bump pool.
+AHB is the freeable heap; DTCM is the bump pool. For RAM_EMU, `ram_init()`
+is the rewind (back to the current `ram_start`).
 
 ### Choosing a home (rules of thumb)
 

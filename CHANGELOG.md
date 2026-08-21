@@ -10,8 +10,12 @@ When you cut a release:
 2. Commit the changelog update.
 3. Push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
 
-CI reads the matching section and uses it as the GitHub Release notes. The tag
-is also used in staged asset names (`<binary>-<tag>.bin`, `<binary>-<tag>.zip`).
+CI reads the matching section and uses it as the GitHub Release notes. Assets
+attached to the release:
+
+- `<binary>-<tag>.zip` — SD layout only (`cores/` + packed `.bin`)
+- `<binary>-<tag>-debug.zip` — ELF + linker map (use `arm-none-eabi-addr2line`
+  for crash PC/LR → function/line)
 
 ## [Unreleased]
 
@@ -29,11 +33,18 @@ is also used in staged asset names (`<binary>-<tag>.bin`, `<binary>-<tag>.zip`).
 - Ported the firmware PC Engine / PC Engine CD core (`pce-go` + `porting/pce`)
   into this standalone tree: HuCard + CD-ROM² tabs, ITCM hot path, `pceplus`
   cheats.
+- SDL host preview (`make host`) with F1/F2 savestate paths under
+  `./host_saves/`.
+- CI ships install + debug zips; packed version from `git describe` tags.
 
 ### Changed
 
 - Packed output is `pce.bin` (`/cores/pce.bin`). HuCard ROMs under `/roms/pce/`,
   CD images under `/roms/pcecd/`, System Card at `/bios/pce/syscard3.pce`.
+- Sync with [retro-go-sd-templates](https://github.com/sylverb/retro-go-sd-templates):
+  SDK (LUT8 / RAM_UC docs, bridge memops overrides, `-g` in ELF),
+  `ram_init()` instead of cores seeding `ram_start`, release staging,
+  and related scripts/CI.
 
 ## [v1.0.0] - 2026-08-12
 

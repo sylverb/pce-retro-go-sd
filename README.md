@@ -51,6 +51,10 @@ Produces `pce.bin`. Copy it to `/cores/` on the SD card.
 
 Requires firmware whose ABI matches `SDK_VERSION` in this repository.
 
+The packed header version is taken from `git describe --tags --dirty`
+(`CORE_VERSION`; override with `make CORE_VERSION=v1.2.3`). No tags →
+`NOTAG` → header `0.0.0`. Release tags should be `vX.Y.Z`.
+
 Useful Docker targets:
 
 - `make docker` — build + pack in the local builder image
@@ -59,17 +63,42 @@ Useful Docker targets:
 
 Override the image tag if needed: `make docker RELEASE_VERSION=v1.5`.
 
+## Host preview (SDL)
+
+Compile the same sources into a desktop binary for faster iteration
+(no G&W flash cycle). This does not replace the ARM pack for the device.
+
+```bash
+make host                       # SDL2 → ./pce_host
+make host HOST_SDL=3            # SDL3 (needs sdl3.pc)
+./pce_host /path/to/rom.pce     # HuCard
+# PCE-CD needs the System Card under HOST_SD/bios/pce/ (same layout as the SD card):
+export HOST_SD="/path/to/your/sd-root"   # contains bios/pce/syscard3.pce
+./pce_host "/path/to/game/game.cue"
+```
+
+On macOS, if `pkg-config sdl2` fails, point it at Homebrew:
+
+```bash
+export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+```
+
+Controls: arrows = D-pad, `Z`/`X` = B/A, Enter = Start, Shift = Select.
+`F1` = save state, `F2` = load state (files under `./host_saves/`).
+Scale with `HOST_SCALE=2` (default).
+
 ## Layout
 
 ```
-Makefile            Project build + pack + docker
+Makefile            Project build + pack + docker + host
 ld/pce_core.ld      RAM_EMU + ITCM linker script
+host/               SDL host preview (stubs, shim, Makefile.host)
 src/main_pce.c      Device glue (ROM/CD mount, audio, savestates)
 src/pce-go/         HuExpress-GO CPU / VDC / memory map
 src/porting/        CD-ROM² SCSI, ADPCM, CUE/BIN, PSG mixer
 src/assets/         Pad + header 1bpp logos (HuCard + CD)
 sdk/                Vendored ABI, bridge, linker fragments, packers
-scripts/            Sync helper
+scripts/            Sync helper, release staging, addr2line helper
 ```
 
 CPU-hot objects (`gfx`, `h6280`, `pce`, `sound_pce`, `pce_cd`,
@@ -78,7 +107,8 @@ and the ABI bridge stay in **RAM_EMU**. See `ld/pce_core.ld`.
 
 Include order in `src/main_pce.c`: firmware-style headers first, then
 `#include "gw_core_bridge.h"` last (macros rewrite `ACTIVE_FILE` /
-`ram_start` / `common_emu_state`).
+`ram_start` / `common_emu_state`). Host builds use `host_compat.h`
+instead (`make host`).
 
 Undefined references at link time usually mean a symbol is missing from
 `sdk/src/gw_core_bridge_redefine_syms.txt` and/or lacks a `core_*`

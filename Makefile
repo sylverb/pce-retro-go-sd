@@ -1,6 +1,8 @@
 # PC Engine / PC Engine CD — standalone Retro-Go SD core (pce-go + porting).
 #
 #   make                  — build + pack → pce.bin
+#   make host             — Linux/macOS SDL binary (same sources)
+#   make host HOST_SDL=3  — same with SDL3
 #   make docker           — same build inside Docker (no host toolchain)
 #   make docker_shell     — interactive shell in the builder image
 #
@@ -14,6 +16,7 @@
 #######################################
 # Project identity
 #######################################
+# core     → pack_core.py     → /cores/<name>.bin
 PROJECT_KIND ?= core
 
 CORE_NAME  := pce
@@ -39,6 +42,33 @@ CORE_C_INCLUDES := \
 GNW_CORE_SDK ?= sdk
 # Must match EXCLUDE_FILE / .core_itcm paths in ld/pce_core.ld.
 BUILD_DIR ?= build
+
+#######################################
+# SDK bridge overrides (optional)
+#######################################
+# The SDK bridge (gw_core_bridge.c) provides default implementations for
+# memcpy/memset/memmove/__aeabi_mem* and malloc/calloc/free/realloc.
+# Define these to exclude the SDK versions and supply your own:
+#
+#   GW_CORE_BRIDGE_DISABLE_SDK_MEMCPY — exclude memcpy only.
+#       Memmove stays routed through the SDK bridge (Doom/fastmem needs it).
+#
+#   GW_CORE_BRIDGE_DISABLE_SDK_MEMSET — exclude memset only.
+#
+#   GW_CORE_BRIDGE_DISABLE_SDK_MEMMOVE — exclude memmove too (requires your
+#       core to provide memmove).
+#
+#   GW_CORE_BRIDGE_DISABLE_SDK_MEMOPS — back-compat: exclude the full memops
+#       block (memcpy/memset/memmove + all __aeabi_mem* helpers).
+#
+#   GW_CORE_BRIDGE_DISABLE_SDK_MALLOC — exclude the malloc/calloc/free/
+#       realloc wrappers that forward to the firmware ABI heap. Use this when
+#       the core links its own allocator or needs a custom malloc/free path.
+#
+# To enable, add the define(s) to CORE_C_DEFS below, e.g.:
+#   CORE_C_DEFS += -DGW_CORE_BRIDGE_DISABLE_SDK_MEMCPY
+#   CORE_C_DEFS += -DGW_CORE_BRIDGE_DISABLE_SDK_MEMSET
+#   CORE_C_DEFS += -DGW_CORE_BRIDGE_DISABLE_SDK_MALLOC
 
 #######################################
 # Kind-specific compile defs + packing
@@ -70,12 +100,21 @@ include $(GNW_CORE_SDK)/Makefile
 PACK_CORE := $(GNW_CORE_SDK)/tools/pack_core.py
 
 #######################################
+# Packed header version
+#######################################
+# gnw_core_meta_t only stores major.minor.patch (0..255).
+# CORE_VERSION is the full git describe string passed to the packer; it
+# extracts the leading vX.Y.Z (NOTAG / missing tags → 0.0.0).
+# Override: make CORE_VERSION=v1.2.3
+CORE_VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo NOTAG)
+
+#######################################
 # Pack
 #######################################
 .PHONY: pack
 
 pack: $(TARGET_BIN) $(BUILD_DIR)/pce_core_itcm.bin $(PAD_LOGO) $(HEADER_LOGO) $(HEADER_CD)
-	$(V)$(ECHO) [ PACK CORE ] $(PACKED_BIN)
+	$(V)$(ECHO) [ PACK CORE ] $(PACKED_BIN) version=$(CORE_VERSION)
 	$(V)python3 $(PACK_CORE) \
 		--elf $(TARGET_ELF) --bin $(TARGET_BIN) \
 		--system name="PC Engine",dirname=pce,pad_logo=$(PAD_LOGO),header_logo=$(HEADER_LOGO),ext=pce,parse=rom,cheat_ext=pceplus \
@@ -83,13 +122,14 @@ pack: $(TARGET_BIN) $(BUILD_DIR)/pce_core_itcm.bin $(PAD_LOGO) $(HEADER_LOGO) $(
 		--logo-invert \
 		--segment itcm:__ITCM_CORE_START__:__CORE_ITCM_CODE_END__:__CORE_ITCM_BSS_END__:$(BUILD_DIR)/pce_core_itcm.bin \
 		--core-name "PCE-GO" \
-		--version 1.0.0 \
+		--version "$(CORE_VERSION)" \
 		--out $(PACKED_BIN)
 
 all: pack
 
 # Read-only helpers for CI / scripts (make print-PROJECT_KIND, etc.).
-.PHONY: print-PROJECT_KIND print-PACKED_BIN print-CORE_NAME print-DOCKER_IMAGE
+.PHONY: print-PROJECT_KIND print-PACKED_BIN print-CORE_NAME print-DOCKER_IMAGE \
+	print-TARGET_ELF print-TARGET_MAP print-CORE_VERSION
 print-PROJECT_KIND:
 	@echo $(PROJECT_KIND)
 print-PACKED_BIN:
@@ -98,6 +138,12 @@ print-CORE_NAME:
 	@echo $(CORE_NAME)
 print-DOCKER_IMAGE:
 	@echo $(DOCKER_IMAGE)
+print-TARGET_ELF:
+	@echo $(TARGET_ELF)
+print-TARGET_MAP:
+	@echo $(BUILD_DIR)/$(CORE_NAME)_core.map
+print-CORE_VERSION:
+	@echo $(CORE_VERSION)
 
 clean::
 	$(V)rm -f $(PACKED_BIN)
@@ -133,3 +179,8 @@ docker_pull:
 # Interactive shell with the same image / mount as `make docker`.
 docker_shell:
 	$(DOCKER_RUN) bash
+
+#######################################
+# Host SDL (Linux / macOS)
+#######################################
+include host/Makefile.host
